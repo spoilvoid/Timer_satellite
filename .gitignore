@@ -165,3 +165,5 @@ data_loader_all.py
 /debug/
 /inference_results/
 /packages/
+pretrain_data_gen/general_data
+pretrain_data_gen/general_data_processed

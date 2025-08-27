@@ -2,7 +2,7 @@ import os
 
 import torch
 
-from models import TrmEncoder, Timer
+from models import TrmEncoder, Timer, Timer_multivariate
 
 
 class Exp_Basic(object):
@@ -11,6 +11,7 @@ class Exp_Basic(object):
         self.model_dict = {
             'TrmEncoder': TrmEncoder,
             'Timer': Timer,
+            'Timer_multivariate': Timer_multivariate
         }
         if self.args.use_multi_gpu:
             self.model = self._build_model()
@@ -21,7 +22,6 @@ class Exp_Basic(object):
 
     def _build_model(self):
         raise NotImplementedError
-        return None
 
     def _acquire_device(self):
         if self.args.use_gpu:

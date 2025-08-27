@@ -19,7 +19,7 @@ if __name__ == '__main__':
     # basic config
     parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
                         help='task name, options:[forecast, imputation, anomaly_detection]')
-    parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
+    # parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
     parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
     parser.add_argument('--model', type=str, required=True, default='Timer',
                         help='model name, options: [Timer TrmEncoder]')
@@ -54,7 +54,14 @@ if __name__ == '__main__':
                         help='time features encoding, options:[timeF, fixed, learned]')
     parser.add_argument('--activation', type=str, default='gelu', help='activation')
     parser.add_argument('--output_attention', action='store_true', help='whether to output attention in ecoder')
-
+    parser.add_argument('--use_norm', action='store_true', help='use norm', default=False)
+    parser.add_argument('--max_len', type=int, default=10000, help='max sequence length which is used for positional embedding [n_patches * patch_len]')
+    parser.add_argument('--mask_flag', action='store_false', help='whether to use mask flag, using this argument means not using any type of mask', default=True)
+    parser.add_argument('--binary_bias', action='store_true', help='use binary bias', default=False)
+    parser.add_argument('--covariate', action='store_true', help='use covariate', default=False)
+    parser.add_argument('--n_pred_vars', type=int, default=1, help='number of predicted vars in multivariate with covariate')
+    parser.add_argument('--freeze_layer', action='store_true', help='freeze some layer in training procedure', default=False)
+    
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
     parser.add_argument('--itr', type=int, default=1, help='experiments times')
@@ -76,6 +83,7 @@ if __name__ == '__main__':
     parser.add_argument('--stride', type=int, default=1, help='stride')
     parser.add_argument('--ckpt_path', type=str, default='', help='ckpt file')
     parser.add_argument('--finetune_epochs', type=int, default=10, help='train epochs')
+    parser.add_argument('--finetune_rate', type=float, default=0.1, help='finetune ratio')
     parser.add_argument('--local_rank', type=int, default=0, help='local_rank')
 
     parser.add_argument('--patch_len', type=int, default=24, help='input sequence length')
@@ -97,20 +105,37 @@ if __name__ == '__main__':
 
     # autoregressive configs
     parser.add_argument('--use_ims', action='store_true', help='Iterated multi-step', default=False)
-    parser.add_argument('--output_len', type=int, default=96, help='output len')
+    parser.add_argument('--output_len', type=int, default=96, help='multi-step total output len')
     parser.add_argument('--output_len_list', type=int, nargs="+", help="output_len_list")
 
     # train_test
     parser.add_argument('--train_test', type=int, default=1, help='train_test')
+    parser.add_argument('--valid_ratio', type=float, default=0.2)
     parser.add_argument('--is_finetuning', type=int, default=1, help='status')
+    parser.add_argument('--test_dir', type=str, default="test_results", help='folder to store test results')
+    parser.add_argument('--test_version', type=str, default="test", choices=["test", "predict", "prune", "visualize"], help='use 1 step forecast or rolling forecast')
+    parser.add_argument('--prune_ratio', type=float, default=0.2, help='prune ratio')
+    parser.add_argument('--remove_mask', action='store_true', help='remove mask', default=False)
 
     # forecasting task
     parser.add_argument('--seq_len', type=int, default=96, help='input sequence length')
     parser.add_argument('--label_len', type=int, default=48, help='start token length')
-    parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
+    parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length per step')
+    parser.add_argument('--input_len', type=int, default=96, help='prediction sequence length start postion after seq_len begin')
 
     # imputation task
     parser.add_argument('--mask_rate', type=float, default=0.25, help='mask ratio')
+
+    # anomaly detection task
+    parser.add_argument('--loss_threshold', type=float, default=5, help='loss threshold to classified as abnormal')
+
+    # opacus options
+    parser.add_argument('--use_opacus', action='store_true', help='use opacus', default=False)
+    parser.add_argument('--noise_multiplier', type=float, default=1.1, help='noise multiplier')
+    parser.add_argument('--max_grad_norm', type=float, default=1.0, help='max grad norm')
+
+    # training info visualize configs
+    parser.add_argument('--record_info', action='store_true', help='gradient rpsilon,etc info record and visualization', default=False)
 
     args = parser.parse_args()
     fix_seed = args.seed
@@ -148,59 +173,34 @@ if __name__ == '__main__':
         if args.is_finetuning:
             for ii in range(args.itr):
                 # setting record of experiments
-                setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}'.format(
-                    args.task_name,
-                    args.model_id,
-                    args.model,
-                    args.data,
-                    args.features,
-                    args.seq_len,
-                    args.label_len,
-                    args.pred_len,
-                    args.patch_len,
-                    args.d_model,
-                    args.n_heads,
-                    args.e_layers,
-                    args.d_layers,
-                    args.d_ff,
-                    args.factor,
-                    args.embed,
-                    args.distil,
-                    args.des,
-                    ii)
+                setting = f"{args.model}_{args.task_name}_{args.data}_d{args.d_model}_n{args.n_heads}_l{args.e_layers}_itr{ii}_"
                 setting += datetime.now().strftime("%y-%m-%d_%H-%M-%S")
 
                 exp = Exp(args)  # set experiments
                 print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
                 exp.finetune(setting)
 
-                print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-                exp.test(setting)
-                torch.cuda.empty_cache()
+                try:
+                    print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+                    exp.test(setting)
+                    torch.cuda.empty_cache()
+                except Exception as e:
+                    print("testing procedure incomplete or module failed")
+                    pass
         else:
             ii = 0
-            setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}'.format(
-                args.task_name,
-                args.model_id,
-                args.model,
-                args.data,
-                args.features,
-                args.seq_len,
-                args.label_len,
-                args.pred_len,
-                args.d_model,
-                args.n_heads,
-                args.e_layers,
-                args.d_layers,
-                args.d_ff,
-                args.factor,
-                args.embed,
-                args.distil,
-                args.des,
-                ii)
-
+            setting = f"{args.model}_{args.task_name}_{args.data}_d{args.d_model}_n{args.n_heads}_l{args.e_layers}_{args.test_version}_"
             setting += datetime.now().strftime("%y-%m-%d_%H-%M-%S")
             exp = Exp(args)  # set experiments
-            print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-            exp.test(setting, test=1)
+            print(f">>>>>>>{args.test_version}ing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<".format(setting))
+            if args.test_version == "test":
+                exp.test(setting, test=1)
+            elif args.test_version == "predict":
+                exp.predict(setting, test=1)
+            elif args.test_version == "prune":
+                exp.prune(setting, train=args.train_test, prune_ratio=args.prune_ratio, remove_mask=args.remove_mask)
+            elif args.test_version == "visualize":
+                exp.visualize(setting, test=1)
+            else:
+                raise ValueError("invalid test version")
             torch.cuda.empty_cache()

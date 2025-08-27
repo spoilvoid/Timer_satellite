@@ -11,3 +11,6 @@ sympy==1.11.1
 torch==2.0.1
 tqdm==4.64.1
 transformers==4.40.1
+opacus==1.1.0
+seaborn
+phe

@@ -12,6 +12,150 @@ from utils.timefeatures import time_features
 warnings.filterwarnings('ignore')
 
 
+class MultivariateDatasetBenchmark(Dataset):
+    def __init__(
+        self,
+        root_path,
+        data_path='default.csv',
+        seq_len=672,
+        input_len=96,
+        output_len=96, 
+        ):
+        self.seq_len = seq_len # 672
+        self.input_len = input_len # 96
+        self.output_len = output_len # 96
+
+        self.root_path = root_path
+        self.data_path = data_path
+
+        self.__read_data__()
+
+
+    def __read_data__(self):
+        self.scaler = StandardScaler()
+        dataset_file_path = os.path.join(self.root_path, self.data_path)
+        if dataset_file_path.endswith('.csv'):
+            df_raw = pd.read_csv(dataset_file_path)
+        elif dataset_file_path.endswith('.txt'):
+            df_raw = []
+            with open(dataset_file_path, "r", encoding='utf-8') as f:
+                for line in f.readlines():
+                    line = line.strip('\n').split(',')
+                    data_line = np.stack([float(i) for i in line])
+                    df_raw.append(data_line)
+            df_raw = np.stack(df_raw, 0)
+            df_raw = pd.DataFrame(df_raw)
+        elif dataset_file_path.endswith('.npz'):
+            data = np.load(dataset_file_path, allow_pickle=True)
+            data = data['data'][:, :, 0]
+            df_raw = pd.DataFrame(data)
+        elif dataset_file_path.endswith('.npy'):
+            data = np.load(dataset_file_path)
+            df_raw = pd.DataFrame(data)
+        else:
+            raise ValueError('Unknown data format: {}'.format(dataset_file_path))
+
+        if df_raw.columns[0] == 'time':
+            data = df_raw[df_raw.columns[1:]].values
+        else:
+            data = df_raw.values
+
+        self.data_x = data
+        self.data_y = data
+        
+        self.n_var = self.data_x.shape[-1]
+        self.n_timepoint = max(0, len(self.data_x) - self.seq_len - self.output_len + 1)
+        
+    def __getitem__(self, index):
+        s_begin = index
+        s_end = s_begin + self.seq_len
+        r_begin = s_begin + self.input_len
+        r_end = s_end + self.output_len
+
+        seq_x = self.data_x[s_begin:s_end]
+        seq_y = self.data_y[r_begin:r_end]
+        seq_x_mark = torch.zeros((seq_x.shape[0], 1))
+        seq_y_mark = torch.zeros((seq_x.shape[0], 1))
+            
+        return seq_x, seq_y, seq_x_mark, seq_y_mark
+
+    def __len__(self):
+        return self.n_timepoint
+
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)
+
+
+class MultivariateAnomalyDatasetBenchmark(Dataset):
+    def __init__(
+        self, 
+        root_path,
+        data_path='default.csv',
+        seq_len=768,
+        patch_len=96,
+        flag="train",
+        ):
+        self.seq_len = seq_len # 768
+        self.patch_len = patch_len # 96
+        self.flag = flag
+        self.stride = 1 if self.flag == "train" else self.seq_len - 2 * self.patch_len
+
+        self.root_path = root_path
+        self.data_path = data_path
+
+        self.__read_data__()
+
+    def __read_data__(self):
+        self.scaler = StandardScaler()
+        dataset_file_path = os.path.join(self.root_path, self.data_path)
+        if dataset_file_path.endswith('.csv'):
+            df_raw = pd.read_csv(dataset_file_path)
+        elif dataset_file_path.endswith('.txt'):
+            df_raw = []
+            with open(dataset_file_path, "r", encoding='utf-8') as f:
+                for line in f.readlines():
+                    line = line.strip('\n').split(',')
+                    data_line = np.stack([float(i) for i in line])
+                    df_raw.append(data_line)
+            df_raw = np.stack(df_raw, 0)
+            df_raw = pd.DataFrame(df_raw)
+        elif dataset_file_path.endswith('.npz'):
+            data = np.load(dataset_file_path, allow_pickle=True)
+            data = data['data'][:, :, 0]
+            df_raw = pd.DataFrame(data)
+        elif dataset_file_path.endswith('.npy'):
+            data = np.load(dataset_file_path)
+            df_raw = pd.DataFrame(data)
+        else:
+            raise ValueError('Unknown data format: {}'.format(dataset_file_path))
+
+        if df_raw.columns[0] == 'time':
+            data = df_raw[df_raw.columns[1:]].values
+            time_list = df_raw[df_raw.columns[0]].values
+        else:
+            data = df_raw.values
+            time_list = []
+
+        self.data = data
+        self.time_list = time_list
+
+        self.mean_vector = np.mean(data, axis=0)
+        self.std_vector = np.std(data, axis=0)
+        
+        self.n_var = self.data.shape[-1]
+        self.n_timepoint = (len(self.data) - self.seq_len) // self.stride + 1
+
+    def __getitem__(self, index):
+        index = index * self.stride
+        return self.data[index:index + self.seq_len, :]
+
+    def __len__(self):
+        return self.n_timepoint
+
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)
+    
+
 class Dataset_ETT_hour(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
@@ -45,7 +189,6 @@ class Dataset_ETT_hour(Dataset):
         self.scaler = StandardScaler()
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
-
         border1s = [0, 12 * 30 * 24 - self.seq_len, 12 * 30 * 24 + 4 * 30 * 24 - self.seq_len]
         border2s = [12 * 30 * 24, 12 * 30 * 24 + 4 * 30 * 24, 12 * 30 * 24 + 8 * 30 * 24]
         border1 = border1s[self.set_type]
@@ -356,6 +499,7 @@ class Dataset_PEMS(Dataset):
         return self.scaler.inverse_transform(data)
 
 
+# 将一个文件的前一部分作为训练，后一部分作为测试，且测试时是要求对整段进行检测并将topk输出
 class UCRAnomalyloader(Dataset):
     def __init__(self, root_path, data_path, seq_len, patch_len, flag="train"):
         self.root_path = root_path
@@ -412,3 +556,6 @@ class UCRAnomalyloader(Dataset):
     def __getitem__(self, index):
         index = index * self.stride
         return self.data[index:index + self.seq_len, :]
+
+
+

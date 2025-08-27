@@ -1,30 +1,27 @@
 #!/bin/sh
 
-model_name=Timer
+model_name=Timer_multivariate
 seq_len=672
 label_len=576
+input_len=96
 pred_len=96
 output_len=96
 patch_len=96
 ckpt_path=checkpoints/Timer_forecast_1.0.ckpt
-data=ETTh1
+data=multivariate
 
-for subset_rand_ratio in 0.01 0.02 0.03 0.04 0.05 0.1 0.15 0.2 0.25 0.5 0.75 1
-do
 # train
-torchrun --nnodes=1 --nproc_per_node=4 run.py \
+torchrun --nnodes=1 --nproc_per_node=2 run.py \
   --task_name forecast \
-  --is_training 0 \
+  --is_finetuning 1 \
   --seed 1 \
-  --ckpt_path $ckpt_path \
-  --root_path ./dataset/D1/ETT-small/ \
-  --data_path $data.csv \
+  --root_path ./dataset/xw/pretrain \
   --data $data \
-  --model_id etth1_sr_$subset_rand_ratio \
+  --model_id Timer_forecast_pretrain \
   --model $model_name \
-  --features M \
   --seq_len $seq_len \
   --label_len $label_len \
+  --input_len $input_len \
   --pred_len $pred_len \
   --output_len $output_len \
   --use_norm \
@@ -33,14 +30,13 @@ torchrun --nnodes=1 --nproc_per_node=4 run.py \
   --des 'Exp' \
   --d_model 1024 \
   --d_ff 2048 \
-  --batch_size 2048 \
-  --learning_rate 3e-5 \
+  --batch_size 48 \
+  --learning_rate 1e-3 \
+  --finetune_epochs 5 \
   --num_workers 4 \
   --patch_len $patch_len \
   --train_test 0 \
-  --subset_rand_ratio $subset_rand_ratio \
   --itr 1 \
   --gpu 0 \
   --use_ims \
   --use_multi_gpu
-done
