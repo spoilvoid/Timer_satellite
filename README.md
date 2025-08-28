@@ -41,7 +41,60 @@ pip install -r requirements.txt
 
 3. Put the checkpoint from [Google Drive](https://drive.google.com/drive/folders/15oaiAl4OO5gFqZMJD2lOtX2fxHbpgcU8?usp=drive_link) or [Baidu Drive](https://pan.baidu.com/s/1Wj_1_qMgyLNLOSUFZK3weg?pwd=r8i1) under the folder ```./checkpoints/```.
 
-4. Train, evaluate and use addtional funtion of the model. We provide detailed Chinese readme files ```.Timer_satellite_command_details.pdf```.
+4. Train, evaluate and use addtional funtion of the model. We provide detailed Chinese readme files ```.Timer_satellite_command_details.pdf```. 
+
+***Tips: Owing to data confidentiality constraints, we are unable to release the satellite dataset or the associated checkpoints. Nevertheless, researchers may construct the dataset in accordance with the procedures outlined above, and initiate training from the Timer checkpoint to obtain the corresponding model weights on the satellite data.***
+
+### Features
+
+> **Modular Design**: The project is organized with a modular structure, making it easy to extend and maintain.  
+> **Unified Argument Management**: Parameters are centrally managed through a root-level `ArgParser`, ensuring consistency across modules.  
+> **Reproducible Experiments**: Example scripts are provided for running the code, enabling convenient experiment management and result reproduction.
+
+### Project Structures
+```
+Timer
+├── checkpoints     # Initial and trained model weights
+│       ├── Timer_forecast_1.0.ckpt     # Initial weights for time-series forecasting
+│       ├── Timer_imputation_1.0.ckpt     # Initial weights for data imputation
+│       ├── Timer_anomaly_detection_1.0.ckpt     # Initial weights for anomaly detection
+│       ├── Timer_bias_forecast_1.0.ckpt     # Forecasting with feature bias
+│       ├── Timer_bias_imputation_1.0.ckpt      # Imputation with feature bias
+│       └── Timer_bias_anomaly_detection_1.0.ckpt     # Anomaly detection with feature bias
+├── data_provider     # Dataset-related modules
+│       ├── data_factory.py     # Utility for selecting dataset by input args
+│       └── data_loader.py     # Dataset class definitions
+├── dataset     # Data files directory
+├── exp     # Experiment classes
+│    ├── exp_basic.py     # Base class for training/testing
+│    ├── exp_forecast.py     # Training/testing for forecasting
+│    ├── exp_imputation.py     # Training/testing for imputation
+│    └── exp_anomaly_forecast.py     # Training/testing for anomaly detection
+├── layers     # Model sub-layers
+│     ├── Attn_Bias.py     # Bias across features
+│     ├── Embed.py     # Positional encoding
+│     ├── SelfAttention_Family.py     # Custom attention mechanisms
+│     └── Transformer_EncDec.py     # Encoder/decoder layers
+├── models     # Model definitions
+│     ├── Timer_multivariate.py     # Main model with task-specific forward()
+│     └── TimerBackbone_multivariate.py     # Backbone model (task-agnostic forward)
+├── pretrain_data_gen/ # Pretraining data generation
+│       └── general_model_data_process.py     # Pretraining data generation script
+├── scripts     # Shell scripts for different tasks
+├── test_results     # Output of test results
+├── utils     # Utility functions
+│     ├── masking.py     # Attention masks
+│     └── tools.py     # Training utilities
+├── draw_figure.py     # Visualization (e.g., gradient norms, epsilon)
+├── enc_dec_paillier.py     # Data encryption/decryption with Paillier
+├── train_utils.py     # Training-related utility functions
+├── run.py     # Argument parsing & main entry for training/testing
+└── requirements.txt     # Python dependencies
+```
+
+### Detailed Usage
+
+Waiting for Implemention, you could see [Chinese ver](./Timer_satellite_command_details.pdf).
 
 ### Supported Tasks
 

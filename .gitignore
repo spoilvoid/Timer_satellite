@@ -171,3 +171,4 @@ pretrain_data_gen/general_data_processed
 /dataset/xw/*
 !/dataset/xw/pretrain/
 !/dataset/xw/pretrain/**
+update_README.md
