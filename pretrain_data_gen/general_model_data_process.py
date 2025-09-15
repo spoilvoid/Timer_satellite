@@ -176,21 +176,21 @@ if __name__ == "__main__":
         print(f"开始对所有的卫星{satellite_name}在{time_day}的数据进行时间偏移处理")
         time_offsets = np.arange(0, delta_t, int(delta_t / n_offset))
         for patch_idx, (final_df_subset, (min_time, max_time)) in enumerate(zip(final_df_subset_list, time_index_range_list)):
-            offset_df_file_path = os.path.join(args.output_dir, f"raw_data/{satellite_name}_{time_day}_patch{patch_idx}-final_df.csv")
-            offset_df =pd.read_csv(offset_df_file_path, index_col=0)
-            start_time = offset_df.index[0]
-            end_time = offset_df.index[-1]
+            final_df_subset_file_path = os.path.join(args.output_dir, f"raw_data/{satellite_name}_{time_day}_patch{patch_idx}-final_df.csv")
+            final_df_subset = pd.read_csv(final_df_subset_file_path, index_col=0)
+            start_time = final_df_subset.index[0]
+            end_time = final_df_subset.index[-1]
             new_index = np.arange(start_time, end_time, delta_t)
             # 创建多个时间偏移版本的数据集
             for offset in time_offsets:
                 # 创建带偏移的新时间索引
                 offset_index = new_index + offset
                 # 创建新的DataFrame用于存储插值结果
-                offset_df = pd.DataFrame(index=offset_index, columns=offset_df.columns)
+                offset_df = pd.DataFrame(index=offset_index, columns=final_df_subset.columns)
                 # 对每个特征列应用不同的插值方法
                 for i, column in enumerate(offset_df.columns):
-                    old_times = offset_df[column].index.values
-                    values = offset_df[column].values
+                    old_times = final_df_subset[column].index.values
+                    values = final_df_subset[column].values
                     if column in params_data['values'].keys():
                         interp_func = interp1d(old_times, values, kind='linear', bounds_error=False, fill_value='extrapolate')
                     elif column in params_data['state'].keys():

@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from torch import optim
 from torch.nn.utils import prune
+from torch.utils.data import TensorDataset, DataLoader
 from opacus import PrivacyEngine
 from data_provider.data_factory import data_provider, concat_data_provider
 from exp.exp_basic import Exp_Basic
@@ -79,21 +80,24 @@ class Exp_Imputation(Exp_Basic):
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
+        mask_dataset, mask_loader = self._mask_data(flag='val')
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
+            for i, ((batch_x, batch_y, batch_x_mark, batch_y_mark), (inp, mask)) in enumerate(zip(vali_loader, mask_loader)):
                 batch_x = batch_x.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
+                inp = inp.float().to(self.device)
+                mask = mask.float().to(self.device)
 
                 # random mask
                 batch_size, seq_len, n_feats = batch_x.shape
                 assert seq_len % self.args.patch_len == 0
-                mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats)).to(self.device)
-                mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1)
-                mask[mask <= self.args.mask_rate] = 0  # masked
-                mask[mask > self.args.mask_rate] = 1  # remained
-                mask = mask.view(mask.size(0), -1, mask.size(-1))
-                mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
-                inp = batch_x.masked_fill(mask == 0, 0)
+                # mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats)).to(self.device)
+                # mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1)
+                # mask[mask <= self.args.mask_rate] = 0  # masked
+                # mask[mask > self.args.mask_rate] = 1  # remained
+                # mask = mask.view(mask.size(0), -1, mask.size(-1))
+                # mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
+                # inp = batch_x.masked_fill(mask == 0, 0)
 
                 outputs = self.model(inp, batch_x_mark, None, None, mask=mask, n_pred_vars=self.args.n_pred_vars)
 
@@ -118,6 +122,74 @@ class Exp_Imputation(Exp_Basic):
         total_loss = np.average(total_loss)
         self.model.train()
         return total_loss
+
+    def _mask_data(self, flag):
+        if flag == 'train':
+            if hasattr(self, 'mask_train_dataset') and hasattr(self, 'mask_train_dataloader'):
+                return self.mask_train_dataset, self.mask_train_dataloader
+            if not hasattr(self, 'train_dataset') or not hasattr(self, 'train_dataloader'):
+                train_data, train_loader = self._get_data(flag='train')
+            data_loader = self.train_dataloader
+        if flag == 'val':
+            if hasattr(self, 'mask_val_dataset') and hasattr(self, 'mask_val_dataloader'):
+                return self.mask_val_dataset, self.mask_val_dataloader
+            if not hasattr(self, 'val_dataset') or not hasattr(self, 'val_dataloader'):
+                vali_data, vali_loader = self._get_data(flag='val')
+            data_loader = self.val_dataloader
+        if flag == 'test':
+            if hasattr(self, 'mask_test_dataset') and hasattr(self, 'mask_test_dataloader'):
+                return self.mask_test_dataset, self.mask_test_dataloader
+            if not hasattr(self, 'test_dataset') or not hasattr(self, 'test_dataloader'):
+                test_data, test_loader = self._get_data(flag='test')
+            data_loader = self.test_dataloader
+        
+        inp_patches, mask_patches = [], []
+        for i, (original_batch_x, _, _, _) in enumerate(data_loader):
+            batch_x = original_batch_x.clone().float().cpu()
+
+            # random mask
+            batch_size, seq_len, n_feats = batch_x.shape
+            assert seq_len % self.args.patch_len == 0
+            mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats))
+            mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1) # [batch_size, seq_len // self.args.patch_len, self.args.patch_len, n_feats]
+            mask[mask <= self.args.mask_rate] = 0  # masked
+            mask[mask > self.args.mask_rate] = 1  # remained
+            mask = mask.view(mask.size(0), -1, mask.size(-1)) # [batch_size, seq_len, n_feats] 如果一个patch内某个feat的mask为0，则所有点该feat均被mask为0
+            mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
+            inp = batch_x.masked_fill(mask == 0, 0)
+
+            inp_patches.append(inp.detach().to('cpu'))
+            mask_patches.append(mask.detach().to('cpu'))
+
+        inp_X = torch.cat(inp_patches, dim=0)  # [N, seq_len, D]
+        mask_X = torch.cat(mask_patches, dim=0)  # [N, seq_len, D]
+        mask_dataset = TensorDataset(inp_X, mask_X)
+
+        # 沿用原 test_dataloader 的常用参数（如取不到则给出保守默认）
+        batch_size  = getattr(data_loader, 'batch_size', 64)
+        num_workers = getattr(data_loader, 'num_workers', 0)
+        pin_memory  = getattr(data_loader, 'pin_memory', False)
+        drop_last   = getattr(data_loader, 'drop_last', False)
+
+        mask_loader = DataLoader(
+            mask_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            drop_last=drop_last,
+        )
+
+        if flag == 'train':
+            self.mask_train_dataset = mask_dataset
+            self.mask_train_dataloader = mask_loader
+        if flag == 'val':
+            self.mask_val_dataset = mask_dataset
+            self.mask_val_dataloader = mask_loader
+        if flag == 'test':
+            self.mask_test_dataset = mask_dataset
+            self.mask_test_dataloader = mask_loader
+        return mask_dataset, mask_loader
 
     def finetune(self, setting):
         train_data, train_loader = self._get_data(flag='train')
@@ -149,13 +221,14 @@ class Exp_Imputation(Exp_Basic):
                 max_grad_norm=self.args.max_grad_norm,
         )
 
+        mask_dataset, mask_loader = self._mask_data(flag='train')
         for epoch in range(self.args.train_epochs):
             iter_count = 0
             train_loss = []
 
             self.model.train()
             epoch_time = time.time()
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
+            for i, ((batch_x, batch_y, batch_x_mark, batch_y_mark), (inp, mask)) in enumerate(zip(train_loader, mask_loader)):
                 if i > train_len:
                     break
                 iter_count += 1
@@ -163,17 +236,18 @@ class Exp_Imputation(Exp_Basic):
 
                 batch_x = batch_x.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
-
+                inp = inp.float().to(self.device)
+                mask = mask.float().to(self.device)
                 # random mask
                 batch_size, seq_len, n_feats = batch_x.shape
                 assert seq_len % self.args.patch_len == 0
-                mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats)).to(self.device)
-                mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1) # [batch_size, seq_len // self.args.patch_len, self.args.patch_len, n_feats]
-                mask[mask <= self.args.mask_rate] = 0  # masked
-                mask[mask > self.args.mask_rate] = 1  # remained
-                mask = mask.view(mask.size(0), -1, mask.size(-1)) # [batch_size, seq_len, n_feats] 如果一个patch内某个feat的mask为0，则所有点该feat均被mask为0
-                mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
-                inp = batch_x.masked_fill(mask == 0, 0)
+                # mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats)).to(self.device)
+                # mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1) # [batch_size, seq_len // self.args.patch_len, self.args.patch_len, n_feats]
+                # mask[mask <= self.args.mask_rate] = 0  # masked
+                # mask[mask > self.args.mask_rate] = 1  # remained
+                # mask = mask.view(mask.size(0), -1, mask.size(-1)) # [batch_size, seq_len, n_feats] 如果一个patch内某个feat的mask为0，则所有点该feat均被mask为0
+                # mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
+                # inp = batch_x.masked_fill(mask == 0, 0)
 
                 outputs = self.model(inp, batch_x_mark, None, None, mask=mask, n_pred_vars=self.args.n_pred_vars)
 
@@ -241,23 +315,26 @@ class Exp_Imputation(Exp_Basic):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
+        mask_dataset, mask_loader = self._mask_data(flag='test')
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader), total=len(test_loader)):
+            for i, ((batch_x, batch_y, batch_x_mark, batch_y_mark), (inp, mask)) in tqdm(enumerate(zip(test_loader, mask_loader)), total=len(test_loader)):
                 batch_x = batch_x.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
+                inp = inp.float().to(self.device)
+                mask = mask.float().to(self.device)
 
                 # random mask
                 batch_size, seq_len, n_feats = batch_x.shape
                 assert seq_len % self.args.patch_len == 0
-                # mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats)).to(self.device)
-                mask = torch.cat([torch.rand((batch_size, seq_len // self.args.patch_len, self.args.n_pred_vars)), torch.ones((batch_size, seq_len // self.args.patch_len, n_feats - self.args.n_pred_vars))], dim=-1).to(self.device)
-                mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1)
-                mask[mask <= self.args.mask_rate] = 0  # masked
-                mask[mask > self.args.mask_rate] = 1  # remained
-                mask = mask.view(mask.size(0), -1, mask.size(-1))
-                mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
-                inp = batch_x.masked_fill(mask == 0, 0)
+                # # mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats)).to(self.device)
+                # mask = torch.cat([torch.rand((batch_size, seq_len // self.args.patch_len, self.args.n_pred_vars)), torch.ones((batch_size, seq_len // self.args.patch_len, n_feats - self.args.n_pred_vars))], dim=-1).to(self.device)
+                # mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1)
+                # mask[mask <= self.args.mask_rate] = 0  # masked
+                # mask[mask > self.args.mask_rate] = 1  # remained
+                # mask = mask.view(mask.size(0), -1, mask.size(-1))
+                # mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
+                # inp = batch_x.masked_fill(mask == 0, 0)
 
                 outputs = self.model(inp, batch_x_mark, None, None, mask=mask, n_pred_vars=self.args.n_pred_vars)
 

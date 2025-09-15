@@ -11,6 +11,7 @@ import torch.nn as nn
 from torch import optim
 import torch.multiprocessing
 from torch.nn.utils import prune
+from torch.utils.data import TensorDataset, DataLoader
 from opacus import PrivacyEngine
 torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -22,8 +23,14 @@ warnings.filterwarnings('ignore')
 
 
 class Exp_Anomaly_Detection(Exp_Basic):
-    def __init__(self, args):
+    def __init__(self, args):        
+        # rec_token_count代表这模型生成有几个patch是有效的
         super(Exp_Anomaly_Detection, self).__init__(args)
+        if self.args.use_ims:
+            rec_token_count = (self.args.seq_len - 2 * self.args.patch_len) // self.args.patch_len
+        else:
+            rec_token_count = self.args.seq_len // self.args.patch_len
+        self.rec_token_count = rec_token_count
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
@@ -201,6 +208,53 @@ class Exp_Anomaly_Detection(Exp_Basic):
 
         return self.model
 
+    def _gen_manual_anomaly_patch(self, k=5):
+        if hasattr(self, 'anomaly_dataset') and hasattr(self, 'anomaly_dataloader'):
+            return self.anomaly_dataset, self.anomaly_dataloader
+        if not hasattr(self, 'test_dataset') or not hasattr(self, 'test_dataloader'):
+            test_data, test_loader = self._get_data(flag='test')
+        manual_anomaly_patch_index_list = random.choices(range(len(self.test_dataset) * self.rec_token_count), k=k) # 对应预测patch的起始index为0
+        self.manual_anomaly_patch_index_list = manual_anomaly_patch_index_list
+        anomalized_batches = []
+        for i, orginal_batch_x in enumerate(self.test_dataloader):
+            batch_x = orginal_batch_x.clone().float().cpu()
+            # manual modify to create anomaly
+            valid_manual_anomaly_patch_index_list = [patch_idx for patch_idx in manual_anomaly_patch_index_list if i*self.rec_token_count <= patch_idx < (i+1)*self.rec_token_count]
+            for patch_idx in valid_manual_anomaly_patch_index_list:
+                token_start = (patch_idx % self.rec_token_count + 1) * self.args.patch_len
+                token_end = token_start + self.args.patch_len
+                # modify std to 5 times
+                batch_x_std = (batch_x[:, token_start:token_end, :self.args.n_pred_vars] - self.test_dataset.mean_vector[:self.args.n_pred_vars]) / self.test_dataset.std_vector[:self.args.n_pred_vars]
+                mask_neg = (batch_x_std < 0) & (batch_x_std > -1)
+                mask_pos = (batch_x_std >= 0) & (batch_x_std < 0)
+                batch_x_std[mask_neg] = -1.0
+                batch_x_std[mask_pos] = 1.0
+                batch_x[:, token_start:token_end, :self.args.n_pred_vars] += 4* batch_x_std * self.test_dataset.std_vector[:self.args.n_pred_vars]
+            anomalized_batches.append(batch_x.detach().to('cpu'))
+
+        anomalized_X = torch.cat(anomalized_batches, dim=0)  # [N, seq_len, D]
+        anomaly_dataset = TensorDataset(anomalized_X)
+
+        # 沿用原 test_dataloader 的常用参数（如取不到则给出保守默认）
+        batch_size  = getattr(self.test_dataloader, 'batch_size', 64)
+        num_workers = getattr(self.test_dataloader, 'num_workers', 0)
+        pin_memory  = getattr(self.test_dataloader, 'pin_memory', False)
+        drop_last   = getattr(self.test_dataloader, 'drop_last', False)
+
+        anomaly_loader = DataLoader(
+            anomaly_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            drop_last=drop_last,
+        )
+
+        # 如需在对象内保存，附上：
+        self.anomaly_dataset = anomaly_dataset
+        self.anomaly_dataloader = anomaly_loader
+        return anomaly_dataset, anomaly_loader
+
     def test(self, setting, test=0):
         print('Model parameters: ', sum(param.numel() for param in self.model.parameters()))
         test_data, test_loader = self._get_data(flag='test')
@@ -216,31 +270,29 @@ class Exp_Anomaly_Detection(Exp_Basic):
         # border1, border2 = self.find_border(self.args.data_path)
 
         token_count = 0
-        # rec_token_count代表这模型生成有几个patch是有效的
-        if self.args.use_ims:
-            rec_token_count = (self.args.seq_len - 2 * self.args.patch_len) // self.args.patch_len
-        else:
-            rec_token_count = self.args.seq_len // self.args.patch_len
-
+        rec_token_count = self.rec_token_count
+        
         input_list = []
         output_list = []
-        manual_anomaly_patch_index_list = random.choices(range(len(test_data) * rec_token_count), k=5) # 对应预测patch的起始index为0
+        anomaly_dataset, anomaly_loader = self._gen_manual_anomaly_patch(k=5)
+        # manual_anomaly_patch_index_list = random.choices(range(len(test_data) * rec_token_count), k=5) # 对应预测patch的起始index为0
         anomaly_input_list = []
         with torch.no_grad():
-            for i, batch_x in enumerate(test_loader):
-                orginal_batch_x = batch_x.clone().float().to(self.device)
-                # manual modify to create anomaly
-                valid_manual_anomaly_patch_index_list = [patch_idx for patch_idx in manual_anomaly_patch_index_list if i*rec_token_count <= patch_idx < (i+1)*rec_token_count]
-                for patch_idx in valid_manual_anomaly_patch_index_list:
-                    token_start = (patch_idx % rec_token_count + 1) * self.args.patch_len
-                    token_end = token_start + self.args.patch_len
-                    # modify std to 5 times
-                    batch_x_std = (batch_x[:, token_start:token_end, :self.args.n_pred_vars] - test_data.mean_vector[:self.args.n_pred_vars]) / test_data.std_vector[:self.args.n_pred_vars]
-                    mask_neg = (batch_x_std < 0) & (batch_x_std > -1)
-                    mask_pos = (batch_x_std >= 0) & (batch_x_std < 0)
-                    batch_x_std[mask_neg] = -1.0
-                    batch_x_std[mask_pos] = 1.0
-                    batch_x[:, token_start:token_end, :self.args.n_pred_vars] += 4* batch_x_std * test_data.std_vector[:self.args.n_pred_vars]
+            for i, (orginal_batch_x, batch_x) in enumerate(zip(test_loader, anomaly_loader)):
+                batch_x = batch_x[0]
+                # orginal_batch_x = batch_x.clone().float().to(self.device)
+                # # manual modify to create anomaly
+                # valid_manual_anomaly_patch_index_list = [patch_idx for patch_idx in manual_anomaly_patch_index_list if i*rec_token_count <= patch_idx < (i+1)*rec_token_count]
+                # for patch_idx in valid_manual_anomaly_patch_index_list:
+                #     token_start = (patch_idx % rec_token_count + 1) * self.args.patch_len
+                #     token_end = token_start + self.args.patch_len
+                #     # modify std to 5 times
+                #     batch_x_std = (batch_x[:, token_start:token_end, :self.args.n_pred_vars] - test_data.mean_vector[:self.args.n_pred_vars]) / test_data.std_vector[:self.args.n_pred_vars]
+                #     mask_neg = (batch_x_std < 0) & (batch_x_std > -1)
+                #     mask_pos = (batch_x_std >= 0) & (batch_x_std < 0)
+                #     batch_x_std[mask_neg] = -1.0
+                #     batch_x_std[mask_pos] = 1.0
+                #     batch_x[:, token_start:token_end, :self.args.n_pred_vars] += 4* batch_x_std * test_data.std_vector[:self.args.n_pred_vars]
 
                 batch_x = batch_x.float().to(self.device)
                 # reconstruct the input sequence and record the loss as a sorted list
@@ -312,7 +364,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 if anomaly_feat_idx == feat_idx:
                     plt.axvspan(xmin, xmax, ymin=0, ymax=1, facecolor='yellow', alpha=0.5, edgecolor='none')
             
-            for patch_idx in manual_anomaly_patch_index_list:
+            for patch_idx in self.manual_anomaly_patch_index_list:
                 plt.axvspan(patch_idx*self.args.patch_len+1, (patch_idx+1)*self.args.patch_len, ymin=0, ymax=1, facecolor='cyan', alpha=0.5, edgecolor='none')
 
 

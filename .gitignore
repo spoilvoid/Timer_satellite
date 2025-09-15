@@ -163,7 +163,8 @@ data_loader_all.py
 /debugr/
 /debug/
 /inference_results/
-/packages/\
+/packages/
+pretrain_data_gen/tmp
 pretrain_data_gen/general_data
 pretrain_data_gen/general_data_processed
 /dataset/*

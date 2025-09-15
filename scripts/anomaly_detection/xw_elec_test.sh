@@ -35,6 +35,5 @@ python3 -u run.py \
   --e_layers $e_layers \
   --test_version test \
   --batch_size 128 \
-  --loss_threshold 5
   --use_ims
 done

@@ -17,7 +17,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Large Time Series Model')
 
     # basic config
-    parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
+    parser.add_argument('--task_name', type=str, required=True, default='forecast',
                         help='task name, options:[forecast, imputation, anomaly_detection]')
     # parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
     parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
