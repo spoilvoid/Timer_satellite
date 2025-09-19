@@ -42,6 +42,25 @@ def load_satellite_data(raw_data_root, satellite_name, time_day):
     return final_df
 
 
+def load_satellite_data_new(raw_data_root, satellite_name, time_day):
+    path_in = f'{raw_data_root}/{satellite_name}/{time_day}/'
+    final_df = pd.DataFrame()
+    for file in os.listdir(path_in):
+            # 数据加载
+            part_data = pd.read_orc(path_in + file)
+            part_data['id'] = part_data['satellite_code'] + '_' + part_data['star_time']
+            part_data['parse_data'] = pd.to_numeric(part_data['parse_data'], errors='coerce')
+            pivot_data = part_data.pivot_table(index='id',columns='param_code', values='parse_data', fill_value=None)
+            pivot_data = pivot_data.sort_values(by='id')  
+            pivot_data.dropna(axis=0,how="all",inplace=True)  
+            pivot_data['time']=pivot_data.index.str.split("_").str[1].map(convert_time_num)
+            final_df = pd.concat([final_df,pivot_data],axis=0)
+            del part_data
+            del pivot_data
+    final_df=final_df.sort_values("time")
+    return final_df
+
+
 def find_valid_timeindex(selected_data_df, patch_time=10, density_threshold=0.5):
     """基于数据密度检测有效数据段
     
@@ -113,6 +132,7 @@ def find_valid_timeindex(selected_data_df, patch_time=10, density_threshold=0.5)
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, default="./general_data", help="输入数据文件根目录")
+    parser.add_argument("--param_dir", type=str, default="./params", help="参数文件根目录")
     parser.add_argument("--delta_t", type=int, default=60, help="时间间隔偏移")
     parser.add_argument("--n_offset", type=int, default=6, help="时间间隔偏移数量")
     parser.add_argument("--patch_time", type=int, default=90, help="单时间段最小间隔")
@@ -124,8 +144,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # 从配置中获取参数
-    data_tuple_path = os.path.join(args.input_dir, "params/data_tuple.json") 
-    params_path = os.path.join(args.input_dir, "params/X_range.json") 
+    data_tuple_path = os.path.join(args.param_dir, "data_tuple_all.json") 
+    params_path = os.path.join(args.param_dir, "X_range.json") 
     delta_t = args.delta_t
     n_offset = args.n_offset
     patch_time = args.patch_time
@@ -158,17 +178,32 @@ if __name__ == "__main__":
     if not args.resume:
         def load_func(data_tuple):
             satellite_name, time_day = data_tuple
+            final_df_file_path = os.path.join(args.output_dir, f"raw_data/{satellite_name}_{time_day}-final_df.csv")
             print(f"开始处理卫星{satellite_name}在{time_day}的数据")
+
+            if os.path.exists(final_df_file_path):
+                return final_df_file_path
+            
             try:
                 # 加载卫星数据
-                final_df = load_satellite_data(args.input_dir, satellite_name, time_day)
+                if time_day in ["2025-01-15", "2025-01-16", "2025-01-17"]:
+                    final_df = load_satellite_data(args.input_dir, satellite_name, time_day)
+                else:
+                    final_df = load_satellite_data_new(args.input_dir, satellite_name, time_day)
                 print(f"成功加载卫星数据，共{len(final_df)}条记录")
             except Exception as e:
                 return f"加载卫星数据失败: {str(e)}"
             
-            final_df = final_df[["time"] + params_list]
+            # 过滤存在的参数列
+            existing_params = [param for param in params_list if param in final_df.columns]
+            missing_params = [param for param in params_list if param not in final_df.columns]
+
+            if missing_params:
+                print(f"警告：卫星{satellite_name}在{time_day}的数据中缺失以下参数: {missing_params}")
+                print(f"成功加载的参数数量: {len(existing_params)}/{len(params_list)}")
+            
+            final_df = final_df[["time"] + existing_params]
             final_df.set_index('time', inplace=True)
-            final_df_file_path = os.path.join(args.output_dir, f"raw_data/{satellite_name}_{time_day}-final_df.csv")
             os.makedirs(os.path.dirname(final_df_file_path), exist_ok=True)
             final_df.to_csv(final_df_file_path, index=True, index_label="time", encoding='utf-8-sig')
             return final_df_file_path
@@ -181,29 +216,52 @@ if __name__ == "__main__":
         final_df_file_path = os.path.join(args.output_dir, f"raw_data/{satellite_name}_{time_day}-final_df.csv")
         if not os.path.exists(final_df_file_path):
             raise FileNotFoundError(f"未找到处理后的数据文件: {final_df_file_path}")
+        print(f"开始读取卫星{satellite_name}在{time_day}的数据")
         final_df = pd.read_csv(final_df_file_path)
         final_df.set_index('time', inplace=True)
+        print(f"读取卫星{satellite_name}在{time_day}的数据完成")
+
+        existing_params = [param for param in params_list if param in final_df.columns]
+        missing_params = [param for param in params_list if param not in final_df.columns]
+        
+        if missing_params:
+            print(f"警告：卫星{satellite_name}在{time_day}的数据中缺失以下参数: {missing_params}")
+            print(f"成功加载的参数数量: {len(existing_params)}/{len(params_list)}")
 
         def param_func(param):
             single_variable_final_df = final_df[[param]]
-            general_time_index_range_list = find_valid_timeindex(single_variable_final_df, patch_time=patch_time, density_threshold=density_threshold)
-            time_index_range_list, final_df_subset_list = [], []
-            for start_time, end_time in general_time_index_range_list:
-                final_df_subset = single_variable_final_df.loc[single_variable_final_df.index.to_series().between(start_time, end_time)]
-                time_index_range_list.append((start_time, end_time))
-                final_df_subset_list.append(final_df_subset)
-                
-            for patch_idx, final_df_subset in enumerate(final_df_subset_list):
-                final_df_subset_file_path = os.path.join(args.output_dir, f"raw_data/{satellite_name}_{time_day}_{param}_patch{patch_idx}-final_df.csv")
-                os.makedirs(os.path.dirname(final_df_subset_file_path), exist_ok=True)
-                final_df_subset.to_csv(final_df_subset_file_path, index=True, index_label="time", encoding='utf-8-sig')
-                print(f"原始数据已保存到: {final_df_subset_file_path}")
+            if density_threshold != 0:
+                general_time_index_range_list = find_valid_timeindex(single_variable_final_df, patch_time=patch_time, density_threshold=density_threshold)
+                time_index_range_list, final_df_subset_list = [], []
+                for start_time, end_time in general_time_index_range_list:
+                    final_df_subset = single_variable_final_df.loc[single_variable_final_df.index.to_series().between(start_time, end_time)]
+                    time_index_range_list.append((start_time, end_time))
+                    final_df_subset_list.append(final_df_subset)
+                    
+                # for patch_idx, final_df_subset in enumerate(final_df_subset_list):
+                #     final_df_subset_file_path = os.path.join(args.output_dir, f"middle_data/{satellite_name}_{time_day}_{param}_patch{patch_idx}-final_df.csv")
+                #     os.makedirs(os.path.dirname(final_df_subset_file_path), exist_ok=True)
+                #     final_df_subset.to_csv(final_df_subset_file_path, index=True, index_label="time", encoding='utf-8-sig')
+                #     print(f"原始数据已保存到: {final_df_subset_file_path}")
+            else:
+                final_max_index = max(single_variable_final_df[param].dropna().index)
+                final_min_index = min(single_variable_final_df[param].dropna().index)
+                final_df_subset = single_variable_final_df[single_variable_final_df.index.to_series().between(final_min_index, final_max_index)]
+
+                time_index_range_list, final_df_subset_list = [], []
+                time_index_range_list = [(final_min_index, final_max_index)]
+                final_df_subset_list = [final_df_subset]
+
+                # final_df_subset_file_path = os.path.join(args.output_dir, f"middle_data/{satellite_name}_{time_day}_{param}_patch0-final_df.csv")
+                # os.makedirs(os.path.dirname(final_df_subset_file_path), exist_ok=True)
+                # single_variable_final_df.to_csv(final_df_subset_file_path, index=True, index_label="time", encoding='utf-8-sig')
+                # print(f"原始数据已保存到: {final_df_subset_file_path}")
 
             print(f"开始对所有的卫星{satellite_name} {time_day} {param}的数据进行时间偏移处理")
             time_offsets = np.arange(0, delta_t, int(delta_t / n_offset))
             for patch_idx, (final_df_subset, (min_time, max_time)) in enumerate(zip(final_df_subset_list, time_index_range_list)):
-                final_df_subset_file_path = os.path.join(args.output_dir, f"raw_data/{satellite_name}_{time_day}_{param}_patch{patch_idx}-final_df.csv")
-                final_df_subset =pd.read_csv(final_df_subset_file_path, index_col=0)
+                # final_df_subset_file_path = os.path.join(args.output_dir, f"middle_data/{satellite_name}_{time_day}_{param}_patch{patch_idx}-final_df.csv")
+                # final_df_subset =pd.read_csv(final_df_subset_file_path, index_col=0)
                 start_time = final_df_subset.index[0]
                 end_time = final_df_subset.index[-1]
                 new_index = np.arange(start_time, end_time, delta_t)
@@ -233,11 +291,13 @@ if __name__ == "__main__":
                         # 应用插值函数到偏移后的时间索引
                         offset_df[column] = interp_func(offset_index)
                     offset_df = offset_df[offset_df.index.to_series(). between(min_time, max_time)]
+                    if offset_df[param].isna().any():
+                        continue
                     offset_df_filepath = os.path.join(args.output_dir, f"processed_data/{satellite_name}_{time_day}_{param}_interval{delta_t}_patch{patch_idx}_offset{offset}.csv")
                     os.makedirs(os.path.dirname(offset_df_filepath), exist_ok=True)
                     offset_df.to_csv(offset_df_filepath, index=True, index_label="time", encoding='utf-8-sig')
             return f"{satellite_name}_{time_day}_{param}"
 
         with Pool(process_num) as p:
-            result = list(tqdm(p.imap(param_func, params_list), total=len(params_list), desc=f"使用{process_num}个并行进程处理卫星{satellite_name} {time_day}的参数数据"))
+            result = list(tqdm(p.imap(param_func, existing_params), total=len(existing_params), desc=f"使用{process_num}个并行进程处理卫星{satellite_name} {time_day}的参数数据"))
     print(f"卫星数据处理完成，保存到{args.output_dir}")

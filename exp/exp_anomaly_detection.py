@@ -258,6 +258,10 @@ class Exp_Anomaly_Detection(Exp_Basic):
     def test(self, setting, test=0):
         print('Model parameters: ', sum(param.numel() for param in self.model.parameters()))
         test_data, test_loader = self._get_data(flag='test')
+        if test_data.n_timepoint <= 0:
+            print("test_data has no enough data.")
+            return
+    
         score_list = []
         folder_path = os.path.join(self.args.test_dir, setting, os.path.splitext(self.args.data_path)[0])
         if not os.path.exists(folder_path):
@@ -349,6 +353,22 @@ class Exp_Anomaly_Detection(Exp_Basic):
         else:
             df = pd.DataFrame(anomaly_list, columns=['patch_idx', 'feat_idx'])
         df.to_csv(os.path.join(folder_path, "anomaly_result.csv"),index=False)
+
+        total_count = len(score_list)
+        true_count = len(self.manual_anomaly_patch_index_list) * self.args.n_pred_vars
+        true_positive_num = len([idx_item for idx_item in anomaly_list if idx_item[0] in self.manual_anomaly_patch_index_list])
+        false_positive_num = len([idx_item for idx_item in anomaly_list if idx_item[0] not in self.manual_anomaly_patch_index_list])
+        false_negative_num = true_count - true_positive_num
+        true_negative_num = (total_count - true_count) - false_positive_num
+
+        with open(os.path.join(folder_path, f"{os.path.basename(self.args.data_path)}.log"), "w") as file:
+            file.write(f"total_count: {total_count}\n")
+            file.write(f"true_count: {true_count}\n")
+            file.write(f"true_positive_num: {true_positive_num}\n")
+            file.write(f"false_positive_num: {false_positive_num}\n")
+            file.write(f"false_negative_num: {false_negative_num}\n")
+            file.write(f"true_negative_num: {true_negative_num}\n")
+        file.close()
 
         for feat_idx in range(self.args.n_pred_vars):
             input_feat = input[:, feat_idx]

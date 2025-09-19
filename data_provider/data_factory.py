@@ -161,7 +161,10 @@ def concat_data_provider(args, flag):
                 input_len=args.input_len,
                 output_len=args.output_len,
             )
-            dataset_list.append(dataset)
+            if dataset.n_timepoint > 0:
+                dataset_list.append(dataset)
+            else:
+                print(f"{data_path} has no enough data.")
         combined_dataset = ConcatDataset(dataset_list)
         if flag == 'test':
             if args.use_multi_gpu:
@@ -238,7 +241,10 @@ def concat_data_provider(args, flag):
                 input_len=args.input_len,
                 output_len=args.output_len,
             )
-            dataset_list.append(dataset)
+            if dataset.n_timepoint > 0:
+                dataset_list.append(dataset)
+            else:
+                print(f"{data_path} has no enough data.")
         combined_dataset = ConcatDataset(dataset_list)
     
         if flag == 'test':
@@ -302,7 +308,10 @@ def concat_data_provider(args, flag):
                     patch_len=args.patch_len,
                     flag='train',
                 )
-                train_dataset_list.append(dataset)
+                if dataset.n_timepoint > 0:
+                    train_dataset_list.append(dataset)
+                else:
+                    print(f"{data_path} has no enough data.")
             for data_path in val_data_path_list:
                 dataset = MultivariateAnomalyDatasetBenchmark(
                     root_path=root_path,
@@ -311,7 +320,10 @@ def concat_data_provider(args, flag):
                     patch_len=args.patch_len,
                     flag='val',
                 )
-                val_dataset_list.append(dataset)
+                if dataset.n_timepoint > 0:
+                    val_dataset_list.append(dataset)
+                else:
+                    print(f"{data_path} has no enough data.")
             train_dataset = ConcatDataset(train_dataset_list)
             val_dataset = ConcatDataset(val_dataset_list)
 
