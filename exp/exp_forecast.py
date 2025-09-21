@@ -275,7 +275,12 @@ class Exp_Forecast(Exp_Basic):
         else:
             predict_length = self.args.pred_len
         test_data, test_loader = self._get_data(flag='test')
-        random_idx = np.random.randint(0, int(len(test_data)/ dist.get_world_size()))
+
+        if self.args.use_multi_gpu:
+            random_idx = np.random.randint(0, int(len(test_data)/ dist.get_world_size()))
+        else:
+            random_idx = np.random.randint(0, int(len(test_data)))
+
         criterion = self._select_criterion()
         criterion_step = nn.MSELoss(reduction='none')
         total_loss_step = []
@@ -364,7 +369,10 @@ class Exp_Forecast(Exp_Basic):
         if not os.path.exists(folder_path) and int(os.environ.get("LOCAL_RANK", "0")) == 0:
             os.makedirs(folder_path)
         test_data, test_loader = self._get_data(flag='test')
-        random_idx = np.random.randint(0, int(len(test_data)/ dist.get_world_size()))
+        if self.args.use_multi_gpu:
+            random_idx = np.random.randint(0, int(len(test_data)/ dist.get_world_size()))
+        else:
+            random_idx = np.random.randint(0, int(len(test_data)))
         criterion = self._select_criterion()
         criterion_step = nn.MSELoss(reduction='none')
         total_loss_step = []
@@ -522,7 +530,12 @@ class Exp_Forecast(Exp_Basic):
         if not os.path.exists(folder_path) and int(os.environ.get("LOCAL_RANK", "0")) == 0:
             os.makedirs(folder_path)
         test_data, test_loader = self._get_data(flag='test')
-        random_idx = np.random.randint(0, int(len(test_data)/ dist.get_world_size()))
+        
+        if self.args.use_multi_gpu:
+            random_idx = np.random.randint(0, int(len(test_data)/ dist.get_world_size()))
+        else:
+            random_idx = np.random.randint(0, int(len(test_data)))
+        
         x, y, x_mark, y_mark = test_data[random_idx]
         x = torch.tensor(x).reshape(1, -1, x.shape[-1]).float().to(self.device)
         y = torch.tensor(y).reshape(1, -1, y.shape[-1]).float().to(self.device)

@@ -123,7 +123,7 @@ class Exp_Imputation(Exp_Basic):
         self.model.train()
         return total_loss
 
-    def _mask_data(self, flag):
+    def _mask_data(self, flag, test_version="test"):
         if flag == 'train':
             if hasattr(self, 'mask_train_dataset') and hasattr(self, 'mask_train_dataloader'):
                 return self.mask_train_dataset, self.mask_train_dataloader
@@ -150,13 +150,24 @@ class Exp_Imputation(Exp_Basic):
             # random mask
             batch_size, seq_len, n_feats = batch_x.shape
             assert seq_len % self.args.patch_len == 0
-            mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats))
-            mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1) # [batch_size, seq_len // self.args.patch_len, self.args.patch_len, n_feats]
-            mask[mask <= self.args.mask_rate] = 0  # masked
-            mask[mask > self.args.mask_rate] = 1  # remained
-            mask = mask.view(mask.size(0), -1, mask.size(-1)) # [batch_size, seq_len, n_feats] 如果一个patch内某个feat的mask为0，则所有点该feat均被mask为0
-            mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
-            inp = batch_x.masked_fill(mask == 0, 0)
+
+            if test_version == "test":
+                mask = torch.rand((batch_size, seq_len // self.args.patch_len, n_feats))
+                mask = mask.unsqueeze(2).repeat(1, 1, self.args.patch_len, 1) # [batch_size, seq_len // self.args.patch_len, self.args.patch_len, n_feats]
+                mask[mask <= self.args.mask_rate] = 0  # masked
+                mask[mask > self.args.mask_rate] = 1  # remained
+                mask = mask.view(mask.size(0), -1, mask.size(-1)) # [batch_size, seq_len, n_feats] 如果一个patch内某个feat的mask为0，则所有点该feat均被mask为0
+                mask[:, :self.args.patch_len, :] = 1  # first patch is always observed
+                inp = batch_x.masked_fill(mask == 0, 0)
+            elif test_version == "auto_process":
+                # 检查 batch_x 中的 nan，若某 patch 某特征有 nan，则该 patch 该特征全为 0
+                mask = torch.ones((batch_size, seq_len // self.args.patch_len, n_feats))
+                batch_x_reshaped = batch_x.view(batch_size, seq_len // self.args.patch_len, self.args.patch_len, n_feats)
+                nan_mask = torch.isnan(batch_x_reshaped).any(dim=2)  # [batch_size, n_patch, n_feats]
+                mask[nan_mask] = 0
+                mask = mask.repeat(1, self.args.patch_len, 1) # [batch_size, seq_len, n_feats]
+                mask[:, :self.args.patch_len, :] = 1
+                inp = batch_x.masked_fill(mask == 0, 0)
 
             inp_patches.append(inp.detach().to('cpu'))
             mask_patches.append(mask.detach().to('cpu'))
@@ -307,15 +318,28 @@ class Exp_Imputation(Exp_Basic):
 
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
+        if self.args.test_version == "test":
+            folder_path = os.path.join(self.args.test_dir, setting, f"subset{self.args.subset_rand_ratio}_mask{self.args.mask_rate}")
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+
+            mask_dataset, mask_loader = self._mask_data(flag='test')
+        
+        elif self.args.test_version == "auto_process":
+            folder_path = os.path.join(self.args.test_dir, setting, f"subset{self.args.subset_rand_ratio}")
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+
+            mask_dataset, mask_loader = self._mask_data(flag='test', test_version="auto_process")
+
+        else:
+            raise ValueError("Invalid test_version. Supported versions: 'test', 'auto_process'.")
+        
         random_indices = np.random.choice(range(len(test_data)), size=10, replace=False)
         preds = []
         trues = []
         masks = []
-        folder_path = os.path.join(self.args.test_dir, setting, f"subset{self.args.subset_rand_ratio}_mask{self.args.mask_rate}")
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-
-        mask_dataset, mask_loader = self._mask_data(flag='test')
+        
         self.model.eval()
         with torch.no_grad():
             for i, ((batch_x, batch_y, batch_x_mark, batch_y_mark), (inp, mask)) in tqdm(enumerate(zip(test_loader, mask_loader)), total=len(test_loader)):
@@ -397,19 +421,27 @@ class Exp_Imputation(Exp_Basic):
         trues = np.concatenate(trues, 0)
         masks = np.concatenate(masks, 0)
 
-        # result save
-        mae, mse, rmse, mape, mspe = metric(preds[masks == 0], trues[masks == 0])
-        print('mse:{}, mae:{}'.format(mse, mae))
-        f = open(os.path.join(folder_path, "result_imputation.txt"), 'a')
-        f.write(setting + "  \n")
-        f.write('mse:{}, mae:{}'.format(mse, mae))
-        f.write('\n')
-        f.write('\n')
-        f.close()
+        if self.args.test_version == "test":
+            # result save
+            mae, mse, rmse, mape, mspe = metric(preds[masks == 0], trues[masks == 0])
+            print('mse:{}, mae:{}'.format(mse, mae))
+            f = open(os.path.join(folder_path, "result_imputation.txt"), 'a')
+            f.write(setting + "  \n")
+            f.write('mse:{}, mae:{}'.format(mse, mae))
+            f.write('\n')
+            f.write('\n')
+            f.close()
 
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+            np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
+            np.save(folder_path + 'pred.npy', preds)
+            np.save(folder_path + 'true.npy', trues)
+        
+        elif self.args.test_version == "auto_process":
+            np.save(folder_path + 'pred.npy', preds)
+        
+        else:
+            raise ValueError("Invalid test_version. Supported versions: 'test', 'auto_process'.")
+        
         return
 
     def prune(self, setting, train=0, prune_ratio=0.2, remove_mask=False):

@@ -14,6 +14,124 @@ from exp.exp_forecast import Exp_Forecast
 from utils.tools import HiddenPrints
 
 
+args = argparse.Namespace(
+    # ===== basic config =====
+    task_name="forecast",
+    model_id="Timer_multivariate_forecast",
+    model="Timer_multivariate",
+    seed=42,
+
+    # ===== data loader =====
+    data="multivariate",
+    root_path="./dataset/xw/elec",
+    data_path="ETTh1.csv",
+    features="M",
+    target="OT",
+    freq="h",
+    checkpoints="./checkpoints/",
+    inverse=False,
+
+    # ===== model define =====
+    d_model=1024,
+    n_heads=8,
+    e_layers=8,
+    d_layers=1,
+    d_ff=2048,
+    factor=3,
+    distil=True,
+    dropout=0.1,
+    embed="timeF",
+    activation="gelu",
+    output_attention=False,
+    use_norm=True,
+    max_len=10000,
+    mask_flag=True,
+    binary_bias=False,
+    covariate=True,
+    n_pred_vars=15,
+    freeze_layer=False,
+
+    # ===== optimization =====
+    num_workers=4,
+    itr=1,
+    train_epochs=10,
+    batch_size=32,
+    patience=3,
+    learning_rate=3e-5,
+    des="Exp",
+    loss="MSE",
+    lradj="type1",
+    use_amp=False,
+
+    # ===== GPU =====
+    use_gpu=True,
+    gpu=0,
+    use_multi_gpu=False,
+    devices="0,1,2,3",
+
+    # ===== misc =====
+    stride=1,
+    ckpt_path="checkpoints/Timer_forecast_1.0.ckpt",
+    finetune_epochs=10,
+    finetune_rate=0.1,
+    local_rank=0,
+
+    patch_len=96,
+    subset_rand_ratio=1.0,
+    data_type="custom",
+
+    decay_fac=0.75,
+
+    # ===== cosine decay =====
+    cos_warm_up_steps=100,
+    cos_max_decay_steps=60000,
+    cos_max_decay_epoch=10,
+    cos_max=1e-4,
+    cos_min=2e-6,
+
+    # ===== weight decay =====
+    use_weight_decay=0,
+    weight_decay=0.01,
+
+    # ===== autoregressive configs =====
+    use_ims=False,
+    output_len=96,
+    output_len_list=None,
+
+    # ===== train_test =====
+    train_test=0,
+    valid_ratio=0.2,
+    is_finetuning=1,
+    test_dir="test_results",
+    test_version="predict",  # 可选 "test", "predict", "prune", "visualize"
+    prune_ratio=0.2,
+    remove_mask=False,
+
+    # ===== forecasting task =====
+    seq_len=672,
+    label_len=576,
+    pred_len=96,
+    input_len=96,
+
+    # ===== imputation task =====
+    mask_rate=0.25,
+
+    # ===== anomaly detection task =====
+    loss_threshold=10.0,
+
+    # ===== opacus options =====
+    use_opacus=False,
+    noise_multiplier=1.1,
+    max_grad_norm=1.0,
+
+    # ===== training info visualize configs =====
+    record_info=False,
+
+    # ===== version info =====
+    model_version=1,
+)
+
+
 def get_available_devices():
     """检测并返回可用的PyTorch设备列表"""
     devices = ["cpu"]
@@ -49,155 +167,43 @@ def preiction_process_wrapper(params: dict):
     """
     接收一个包含所有超参数的字典。
     """
-    try:
-        args = argparse.Namespace(
-            # ===== basic config =====
-            task_name="forecast",
-            model_id="Timer_multivariate_forecast",
-            model="Timer_multivariate",
-            seed=42,
+    # try:
+    for key, value in params.items():
+        if key in args.__dict__:
+            args.__dict__[key] = value
+        else:
+            print(f"警告: 未知参数 '{key}'，将被忽略。")
 
-            # ===== data loader =====
-            data="multivariate",
-            root_path="./dataset/xw/elec",
-            data_path="ETTh1.csv",
-            features="M",
-            target="OT",
-            freq="h",
-            checkpoints="./checkpoints/",
-            inverse=False,
-
-            # ===== model define =====
-            d_model=1024,
-            n_heads=8,
-            e_layers=8,
-            d_layers=1,
-            d_ff=2048,
-            factor=3,
-            distil=True,
-            dropout=0.1,
-            embed="timeF",
-            activation="gelu",
-            output_attention=False,
-            use_norm=True,
-            max_len=10000,
-            mask_flag=True,
-            binary_bias=False,
-            covariate=True,
-            n_pred_vars=15,
-            freeze_layer=False,
-
-            # ===== optimization =====
-            num_workers=4,
-            itr=1,
-            train_epochs=10,
-            batch_size=32,
-            patience=3,
-            learning_rate=3e-5,
-            des="Exp",
-            loss="MSE",
-            lradj="type1",
-            use_amp=False,
-
-            # ===== GPU =====
-            use_gpu=True,
-            gpu=0,
-            use_multi_gpu=False,
-            devices="0,1,2,3",
-
-            # ===== misc =====
-            stride=1,
-            ckpt_path="checkpoints/Timer_forecast_1.0.ckpt",
-            finetune_epochs=10,
-            finetune_rate=0.1,
-            local_rank=0,
-
-            patch_len=96,
-            subset_rand_ratio=1.0,
-            data_type="custom",
-
-            decay_fac=0.75,
-
-            # ===== cosine decay =====
-            cos_warm_up_steps=100,
-            cos_max_decay_steps=60000,
-            cos_max_decay_epoch=10,
-            cos_max=1e-4,
-            cos_min=2e-6,
-
-            # ===== weight decay =====
-            use_weight_decay=0,
-            weight_decay=0.01,
-
-            # ===== autoregressive configs =====
-            use_ims=False,
-            output_len=96,
-            output_len_list=None,
-
-            # ===== train_test =====
-            train_test=0,
-            valid_ratio=0.2,
-            is_finetuning=1,
-            test_dir="test_results",
-            test_version="predict",  # 可选 "test", "predict", "prune", "visualize"
-            prune_ratio=0.2,
-            remove_mask=False,
-
-            # ===== forecasting task =====
-            seq_len=672,
-            label_len=576,
-            pred_len=96,
-            input_len=96,
-
-            # ===== imputation task =====
-            mask_rate=0.25,
-
-            # ===== anomaly detection task =====
-            loss_threshold=10.0,
-
-            # ===== opacus options =====
-            use_opacus=False,
-            noise_multiplier=1.1,
-            max_grad_norm=1.0,
-
-            # ===== training info visualize configs =====
-            record_info=False,
-
-            # ===== version info =====
-            model_version=1,
-        )
-
-        for key, value in params.items():
-            if key in args.__dict__:
-                args.__dict__[key] = value
-            else:
-                print(f"警告: 未知参数 '{key}'，将被忽略。")
-
-        fix_seed = args.seed
-        random.seed(fix_seed)
-        torch.manual_seed(fix_seed)
-        np.random.seed(fix_seed)
-        args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
-        if args.use_multi_gpu:
-            ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
-            port = os.environ.get("MASTER_PORT", "64209")
-            hosts = int(os.environ.get("WORLD_SIZE", "8"))  # number of nodes
-            rank = int(os.environ.get("RANK", "0"))  # node id
-            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-            gpus = torch.cuda.device_count()  # gpus per node
-            args.local_rank = local_rank
-            print(
-                'ip: {}, port: {}, hosts: {}, rank: {}, local_rank: {}, gpus: {}'.format(ip, port, hosts, rank, local_rank,
-                                                                                            gpus))
-            torch.dist.init_process_group(backend="nccl", init_method=f"tcp://{ip}:{port}", world_size=hosts, rank=rank)
-            print('init_process_group finished')
-            torch.cuda.set_device(local_rank)
-        with HiddenPrints(int(os.environ.get("LOCAL_RANK", "0"))):
-            # setting record of experiments
-            setting = f"{args.model}_{args.task_name}_{args.data}_d{args.d_model}_n{args.n_heads}_l{args.e_layers}_v{args.model_version}"
-            exp = Exp_Forecast(args) 
-            print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+    fix_seed = args.seed
+    random.seed(fix_seed)
+    torch.manual_seed(fix_seed)
+    np.random.seed(fix_seed)
+    args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
+    if args.use_multi_gpu:
+        ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
+        port = os.environ.get("MASTER_PORT", "64209")
+        hosts = int(os.environ.get("WORLD_SIZE", "8"))  # number of nodes
+        rank = int(os.environ.get("RANK", "0"))  # node id
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        gpus = torch.cuda.device_count()  # gpus per node
+        args.local_rank = local_rank
+        print(
+            'ip: {}, port: {}, hosts: {}, rank: {}, local_rank: {}, gpus: {}'.format(ip, port, hosts, rank, local_rank,
+                                                                                        gpus))
+        torch.dist.init_process_group(backend="nccl", init_method=f"tcp://{ip}:{port}", world_size=hosts, rank=rank)
+        print('init_process_group finished')
+        torch.cuda.set_device(local_rank)
+    with HiddenPrints(int(os.environ.get("LOCAL_RANK", "0"))):
+        # setting record of experiments
+        setting = f"{args.model}_{args.task_name}_{args.data}_d{args.d_model}_n{args.n_heads}_l{args.e_layers}_v{args.model_version}"
+        exp = Exp_Forecast(args) 
+        print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+        if args.test_version == "test":
             exp.test(setting)
+        elif args.test_version == "predict":
+            exp.predict(setting)
+        else:
+            raise ValueError("请设置正确的测试方式: 'test' 或 'predict'")
         # train_data_path = os.path.join(params['train_dataset_dir'], params['train_data_filename'])
         # train_dataset_dict = torch.load(train_data_path)
 
@@ -225,9 +231,9 @@ def preiction_process_wrapper(params: dict):
         #     log_every_n_steps=params['log_every_n_steps'],
         #     checkpoint_path=params.get('checkpoint_path', None) 
         # )
-        print("子进程：测试完成。")
-    except Exception as e:
-        print(f"子进程发生错误: {e}")
+    #     print("子进程：测试完成。")
+    # except Exception as e:
+    #     print(f"子进程发生错误: {e}")
 
 # -----------------------------------------------------------------------------
 # Streamlit UI 界面
@@ -377,6 +383,18 @@ with col2:
         )
     else:
         status_placeholder.info("⏹️ 测试已停止或未开始。")
+        try:
+            setting = f"{args.model}_{args.task_name}_{args.data}_d{args.d_model}_n{args.n_heads}_l{args.e_layers}_v{args.model_version}"
+            test_result_dir = os.path.join(args.test_dir, setting)
+            mse_image_path = os.path.join(test_result_dir, "multi-step_test_data_mse.png")
+            # 随机选取一张 png 图片（排除 mse_image_path），使用 random 和 os 实现
+            other_image_path_list = [f for f in os.listdir(test_result_dir) if f.endswith('.png') and os.path.abspath(os.path.join(test_result_dir, f)) != os.path.abspath(mse_image_path)]
+            random_image_path = os.path.join(test_result_dir, random.choice(other_image_path_list)) if other_image_path_list else None
+            st.image([mse_image_path, random_image_path], caption=["MSE图像", "可视化图像"], width=300)
+        except:
+            print(args.test_dir)
+            print(os.listdir(test_result_dir))
+            print("没有找到测试结果图片。")
 
 # --- 按钮逻辑处理 ---
 if start_button:

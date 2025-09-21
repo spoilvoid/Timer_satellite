@@ -113,7 +113,7 @@ if __name__ == '__main__':
     parser.add_argument('--valid_ratio', type=float, default=0.2)
     parser.add_argument('--is_finetuning', type=int, default=1, help='status')
     parser.add_argument('--test_dir', type=str, default="test_results", help='folder to store test results')
-    parser.add_argument('--test_version', type=str, default="test", choices=["test", "predict", "prune", "visualize"], help='use 1 step forecast or rolling forecast')
+    parser.add_argument('--test_version', type=str, default="test", choices=["test", "predict", "auto_process", "prune", "visualize"], help='use 1 step forecast or rolling forecast')
     parser.add_argument('--prune_ratio', type=float, default=0.2, help='prune ratio')
     parser.add_argument('--remove_mask', action='store_true', help='remove mask', default=False)
 

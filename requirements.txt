@@ -14,3 +14,7 @@ transformers==4.40.1
 opacus==1.1.0
 seaborn
 phe
+pyyaml
+plotly
+pyarrow
+streamlit
